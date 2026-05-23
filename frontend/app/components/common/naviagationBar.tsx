@@ -1,18 +1,23 @@
 export default function NavigationBar() {
   return (
-    <div className="flex justify-center ">
-      <div className=" border-1 bg-black opacity-75 border-black z-50 fixed py-1.5 px-3 md:py-3 md:px-6  mt-3 shadow-2xl rounded-xl">
-        <div className="flex space-x-16 ">
-          <button className="text-md font-bold text-white">Nobelium</button>
-          <div className="flex space-x-6">
-            <button>product</button>
-            <button>pricing</button>
-            <button>enterprise</button>
-            <button>blog</button>
-            <button>about</button>
-            <button>use cases</button>
+    <div className="flex justify-center">
+      <div className="z-50 fixed mt-4 bg-black/70 backdrop-blur-md border border-white/10 shadow-2xl rounded-2xl py-2.5 px-5">
+        <div className="flex items-center gap-10">
+          <button className="text-base font-semibold text-white tracking-tight flex items-center gap-1.5">
+            <span className="inline-block w-5 h-5 rounded-md bg-white/20 border border-white/30" />
+            Nobelium
+          </button>
+          <div className="hidden md:flex items-center gap-6 text-sm text-white/70">
+            <button className="hover:text-white transition-colors">Product</button>
+            <button className="hover:text-white transition-colors">Pricing</button>
+            <button className="hover:text-white transition-colors">Enterprise</button>
+            <button className="hover:text-white transition-colors">Blog</button>
+            <button className="hover:text-white transition-colors">About</button>
+            <button className="hover:text-white transition-colors flex items-center gap-1">
+              Use Cases <span className="text-xs">▾</span>
+            </button>
           </div>
-          <button className="border-gray-400 border-1 bg-gray-950  text-white hover:bg-gray-400 p-2 rounded-md ">
+          <button className="text-sm font-medium bg-white text-black hover:bg-white/90 transition-colors px-4 py-1.5 rounded-lg shadow">
             Book a demo
           </button>
         </div>
