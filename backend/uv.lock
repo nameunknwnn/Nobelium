@@ -59,8 +59,10 @@ dependencies = [
     { name = "bcrypt" },
     { name = "deepagents" },
     { name = "fastapi" },
+    { name = "google" },
     { name = "httpx" },
     { name = "langchain-google-genai" },
+    { name = "langchain-openrouter" },
     { name = "psycopg2" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -75,8 +77,10 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "deepagents", specifier = ">=0.6.3" },
     { name = "fastapi", specifier = ">=0.136.1" },
+    { name = "google", specifier = ">=3.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain-google-genai", specifier = ">=4.2.3" },
+    { name = "langchain-openrouter", specifier = ">=0.2.3" },
     { name = "psycopg2", specifier = ">=2.9.12" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
@@ -150,6 +154,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/f6/688d2cd64bfd0b14d805ddb8a565e11ca1fb0fd6817175d58b10052b6d88/bcrypt-5.0.0-cp39-abi3-win32.whl", hash = "sha256:64d7ce196203e468c457c37ec22390f1a61c85c6f0b8160fd752940ccfb3a683", size = 153725, upload-time = "2025-09-25T19:50:34.384Z" },
     { url = "https://files.pythonhosted.org/packages/9f/b9/9d9a641194a730bda138b3dfe53f584d61c58cd5230e37566e83ec2ffa0d/bcrypt-5.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:64ee8434b0da054d830fa8e89e1c8bf30061d539044a39524ff7dec90481e5c2", size = 150912, upload-time = "2025-09-25T19:50:35.69Z" },
     { url = "https://files.pythonhosted.org/packages/27/44/d2ef5e87509158ad2187f4dd0852df80695bb1ee0cfe0a684727b01a69e0/bcrypt-5.0.0-cp39-abi3-win_arm64.whl", hash = "sha256:f2347d3534e76bf50bca5500989d6c1d05ed64b440408057a37673282c654927", size = 144953, upload-time = "2025-09-25T19:50:37.32Z" },
+]
+
+[[package]]
+name = "beautifulsoup4"
+version = "4.14.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "soupsieve" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c3/b0/1c6a16426d389813b48d95e26898aff79abbde42ad353958ad95cc8c9b21/beautifulsoup4-4.14.3.tar.gz", hash = "sha256:6292b1c5186d356bba669ef9f7f051757099565ad9ada5dd630bd9de5fa7fb86", size = 627737, upload-time = "2025-11-30T15:08:26.084Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/39/47f9197bdd44df24d67ac8893641e16f386c984a0619ef2ee4c51fbbc019/beautifulsoup4-4.14.3-py3-none-any.whl", hash = "sha256:0918bfe44902e6ad8d57732ba310582e98da931428d231a5ecb9e7c703a735bb", size = 107721, upload-time = "2025-11-30T15:08:24.087Z" },
 ]
 
 [[package]]
@@ -407,6 +424,18 @@ wheels = [
 ]
 
 [[package]]
+name = "google"
+version = "3.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beautifulsoup4" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/97/b49c69893cddea912c7a660a4b6102c6b02cd268f8c7162dd70b7c16f753/google-3.0.0.tar.gz", hash = "sha256:143530122ee5130509ad5e989f0512f7cb218b2d4eddbafbad40fd10e8d8ccbe", size = 44978, upload-time = "2020-07-11T14:50:45.678Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/35/17c9141c4ae21e9a29a43acdfd848e3e468a810517f862cad07977bf8fe9/google-3.0.0-py2.py3-none-any.whl", hash = "sha256:889cf695f84e4ae2c55fbc0cfdaf4c1e729417fa52ab1db0485202ba173e4935", size = 45258, upload-time = "2020-07-11T14:49:58.287Z" },
+]
+
+[[package]]
 name = "google-auth"
 version = "2.53.0"
 source = { registry = "https://pypi.org/simple" }
@@ -615,6 +644,15 @@ wheels = [
 ]
 
 [[package]]
+name = "jsonpath-python"
+version = "1.1.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/18/4ca8742534a5993ff383f7602e325ce2d5d7cc93d72ac5e1cdedbea8a458/jsonpath_python-1.1.6.tar.gz", hash = "sha256:dded9932b4ec41fb8726e09c83afa4e6be618f938c2db287cc2a81723c639671", size = 88178, upload-time = "2026-05-07T01:26:34.482Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/8a/1270a6803bd821cbfcdda387eaa13cb41a7b1f7b9bd145979b3bfb9d6cb7/jsonpath_python-1.1.6-py3-none-any.whl", hash = "sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4", size = 14453, upload-time = "2026-05-07T01:26:33.306Z" },
+]
+
+[[package]]
 name = "jsonpointer"
 version = "3.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -684,6 +722,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/85/20/76e3b367d31ee8b8beda715ffdd6a5db12d99700a12936123bd9adaaa00f/langchain_google_genai-4.2.3.tar.gz", hash = "sha256:b36bf2201c7b1f1b5d3e13a122af2f8f829151a15183985dcf24e2bc0fcfe69c", size = 269998, upload-time = "2026-05-21T22:11:34.291Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c4/0f/61f0c667d31bfc80fff5af0985d8d7925a75592283a3d2f4b0abf63614e6/langchain_google_genai-4.2.3-py3-none-any.whl", hash = "sha256:2b1be55443c0f409f52799a95f86011e8fa4d15d50b2ee8db2416096828b7042", size = 68569, upload-time = "2026-05-21T22:11:32.749Z" },
+]
+
+[[package]]
+name = "langchain-openrouter"
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+    { name = "openrouter" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/c3/aef363ffe2060c8fba59eb94cb7d12bc9dec059b5f41bfea37f9267b65f7/langchain_openrouter-0.2.3.tar.gz", hash = "sha256:51da9fef8cc065662ab8493c86207039705e721f5086ee603bcb8a456e64dbcb", size = 163923, upload-time = "2026-05-01T21:59:41.977Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/80/82428fdb830d0ff04522f9c4a2d830f54fc309d49f8b8945ca1b5b8d22a3/langchain_openrouter-0.2.3-py3-none-any.whl", hash = "sha256:8fafa4dd2682d6e96135b0affde134ae992dd69b0315dd08ed1707d4cf83f896", size = 23373, upload-time = "2026-05-01T21:59:40.724Z" },
 ]
 
 [[package]]
@@ -772,6 +823,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/17/eb/8883d1158c743d0aac350f09df7880714d27283497e8c80bb9fe3480f165/langsmith-0.8.5.tar.gz", hash = "sha256:3615243d99c12f4047f13042bdc05a373dce232d106a6511b3ca7b48c5af1c2c", size = 4462348, upload-time = "2026-05-15T21:31:41.093Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/23/85/968c88a63e32a59b3e5c68afd2fe114ce0708a125db0be1a85efc25fb2ea/langsmith-0.8.5-py3-none-any.whl", hash = "sha256:efc779f9d450dcaf9d97bc8894f4926276509d6e730e05289af9a64debce06ae", size = 399564, upload-time = "2026-05-15T21:31:39.046Z" },
+]
+
+[[package]]
+name = "openrouter"
+version = "0.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "jsonpath-python" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e4/f5/e19b11ea336129b3a801c4d92cf2a4f38ef8b44a2e9600afb4a5e0984c97/openrouter-0.9.1.tar.gz", hash = "sha256:0fe00c3640c2b956a244b75b46feb02c2526cda9187f5d5edfbedca87cc18fab", size = 181894, upload-time = "2026-04-14T16:50:15.937Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/12/ec58ea55f463f4455ef4676b1fc487a895a647c5975f5f13529f02727f1e/openrouter-0.9.1-py3-none-any.whl", hash = "sha256:2f1dcaa956778781855f473bad28400cf310ad5626df8747ec888997fbdb6223", size = 396449, upload-time = "2026-04-14T16:50:14.486Z" },
 ]
 
 [[package]]
@@ -1064,6 +1130,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372, upload-time = "2024-02-25T23:20:04.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
+]
+
+[[package]]
+name = "soupsieve"
+version = "2.8.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/2c/0a5f6f8ee0d5589e48c7640213ed5175d52cf540a06725b628cc1a45d6ce/soupsieve-2.8.4.tar.gz", hash = "sha256:e121fd02e975c695e4e9e8774a5ee35d74714b59307868dcc5319ad2d9e3328e", size = 121110, upload-time = "2026-05-24T13:55:57.154Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/f5/0c41cb68dcae6b7de4fac4188a3a9589e21fb31df21ea3a2e888db95e6c9/soupsieve-2.8.4-py3-none-any.whl", hash = "sha256:e7e6b0769c8f51ed59acab6e994b00621096cfb1c640a7509295987388fbaf65", size = 37304, upload-time = "2026-05-24T13:55:55.406Z" },
 ]
 
 [[package]]

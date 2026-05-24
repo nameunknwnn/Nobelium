@@ -17,14 +17,18 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from deepagents import create_deep_agent
+from google import genai
+
 
 from middleware.authmiddleware import AuthMiddleware
 
 os.environ["GEMINI_API_KEY"] = settings.GEMINI_API_KEY
 os.environ["GOOGLE_API_KEY"] = settings.GOOGLE_API_KEY
+# os.environ["OPENROUTER_API_KEY"] = settings.OPENROUTER_API_KEY
 
 
 app=FastAPI()
+client = genai.Client()
 
 # Add CORS middleware
 app.add_middleware(
@@ -51,11 +55,8 @@ class EmailAgentSchema(BaseModel):
 
 
 class SuggestAgent(BaseModel):
-    prompt:str
-
-class ContinueAgent(BaseModel):
-    prompt:str
-    thread_id:str
+    prompt: str
+    thread_id: str | None = None
 
 
 def init_db():
@@ -332,13 +333,94 @@ def reply_to_email(message_id: str, body: str, access_token: str) -> str:
 
 
 
+def extract_text(agent_result):
+    content = agent_result.get("content", "")
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        texts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                texts.append(item.get("text", ""))
+        return "\n".join(texts)
+
+    return ""
 
 
-@app.post("/agent/suggest")
+# Friendly display names for available tools
+TOOL_DISPLAY_NAMES = {
+    "search_emails": "Search Gmail",
+    "send_email": "Send Gmail",
+    "reply_to_email": "Reply Gmail",
+}
+
+
+def extract_agent_metadata(prompt: str, existing_steps: list | None = None) -> dict:
+    """
+    Dedicated Gemini call that extracts structured metadata from the user's prompt.
+    - On initial call (existing_steps=None): returns title, watcheTool, updateTool, new_steps
+    - On subsequent calls: returns updateTool (if changed) and only genuinely new steps
+
+    TODO: remove stub and restore the real Gemini call once quota is available.
+    """
+    is_initial = existing_steps is None
+    next_step_number = (len(existing_steps) + 1) if existing_steps else 1
+
+    # --- STUB: hardcoded responses to avoid Gemini quota exhaustion during dev ---
+    if is_initial:
+        return {
+            "title": "Auto-Reply Order Emails",
+            "watcheTool": "Search Gmail",
+            "updateTool": "Reply Gmail",
+            "new_steps": [
+                {"step": 1, "text": "Monitor Gmail for incoming order emails"},
+                {"step": 2, "text": "Read and parse email content"},
+                {"step": 3, "text": "Send automated reply to sender"},
+            ],
+        }
+    else:
+        return {
+            "watcheTool": "Search Gmail",
+            "updateTool": "Reply Gmail",
+            "new_steps": [
+                {"step": next_step_number, "text": "Stub: new step from follow-up prompt"},
+            ],
+        }
+    # --- END STUB ---
+
+    # Real implementation (restore when quota is available):
+    # is_initial = existing_steps is None
+    # tools_desc = "\n".join(f'- {k} → "{v}"' for k, v in TOOL_DISPLAY_NAMES.items())
+    # existing_note = ""
+    # if existing_steps:
+    #     existing_note = (
+    #         f"\nSteps already recorded for this automation: {json.dumps(existing_steps)}\n"
+    #         "Only include steps in new_steps that represent genuinely NEW capabilities "
+    #         "not already covered by the existing steps. Return an empty array if nothing is new."
+    #     )
+    # title_field = '"title": "4-7 word human-readable title for the automation",' if is_initial else ""
+    # next_step_number = (len(existing_steps) + 1) if existing_steps else 1
+    # extraction_prompt = f"""..."""  # (full prompt as written above)
+    # response = client.models.generate_content(model="gemini-2.0-flash", contents=extraction_prompt)
+    # raw = response.text.strip()
+    # if raw.startswith("```"):
+    #     raw = raw.split("```")[1]
+    #     if raw.startswith("json"):
+    #         raw = raw[4:]
+    # return json.loads(raw.strip())
+
+
+@app.post("/agent")
 async def task_suggestion_agent(data: SuggestAgent, req: Request):
     prompt = data.prompt
     user_id = req.state.user_id
-    
+    thread_id = data.thread_id
+    is_new_thread = not thread_id
+
+    if is_new_thread:
+        thread_id = str(uuid.uuid4())
 
     with engine.connect() as conn:
         result = conn.execute(
@@ -351,6 +433,18 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
 
     access_token = row.google_access_token
 
+    # Fetch existing thread data for continuation
+    existing_steps: list = []
+    if not is_new_thread:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text('SELECT steps FROM "AGENT_THREAD" WHERE id = :id AND user_id = :user_id'),
+                {"id": thread_id, "user_id": user_id},
+            )
+            thread_row = result.fetchone()
+            if thread_row and thread_row.steps:
+                existing_steps = thread_row.steps
+
     def _search_emails(query: str) -> str:
         return search_emails(query=query, access_token=access_token)
 
@@ -367,118 +461,155 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
     _reply_to_email.__name__ = "reply_to_email"
     _reply_to_email.__doc__ = reply_to_email.__doc__
 
-    agent = create_deep_agent(
-        model="google_genai:gemini-3.5-flash",
-        tools=[_search_emails, _send_email, _reply_to_email],
-        system_prompt=(
-            "You are a Gmail assistant. Use the available tools to help the user manage their emails. "
-            "You can search emails, send new emails, and reply to existing ones. "
-            "Always choose the right tool based on what the user is asking."
-        ),
-    )
-    agent_result =  agent.invoke(
-        {"messages": [{"role": "user", "content": prompt}]}
-    )
-    
-    thread_id = str(uuid.uuid4())
-    messages_list = agent_result.get('messages', [])
+    # --- STUB: skip agent invocation to avoid Gemini quota exhaustion during dev ---
+    agent_result = {
+        "messages": [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": "[stub] Agent response placeholder — real Gemini call disabled."},
+        ],
+        "content": "[stub] Agent response placeholder — real Gemini call disabled.",
+    }
+    # --- END STUB ---
+
+    # Real implementation (restore when quota is available):
+    # agent = create_deep_agent(
+    #     model="google_genai:gemini-2.0-flash",
+    #     tools=[_search_emails, _send_email, _reply_to_email],
+    #     system_prompt=(
+    #         "You are a Gmail assistant. Use the available tools to help the user manage their emails. "
+    #         "You can search emails, send new emails, and reply to existing ones. "
+    #         "Always choose the right tool based on what the user is asking."
+    #     ),
+    # )
+    # agent_result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+
+    messages_list = agent_result.get("messages", [])
     messages_dict = messages_to_dict(messages_list)
     messages_json = json.dumps(messages_dict)
-    
+
+    # Extract metadata via a dedicated LLM call
+    metadata = extract_agent_metadata(
+        prompt,
+        existing_steps=None if is_new_thread else existing_steps,
+    )
+    new_steps: list = metadata.get("new_steps", [])
+    update_tool: str = metadata.get("updateTool", "")
+
     with engine.connect() as conn:
-        conn.execute(
-            text('INSERT INTO "AGENT_THREAD" (id, user_id, message, status) VALUES(:id, :user_id, :message, :status)'),
-            {"id": thread_id, "user_id": user_id, "message": messages_json, "status": "pending"},
-        )
+        if is_new_thread:
+            title: str = metadata.get("title", "")
+            watch_tool: str = metadata.get("watcheTool", "")
+            conn.execute(
+                text(
+                    'INSERT INTO "AGENT_THREAD" (id, user_id, message, title, watcheTool, updateTool, steps) '
+                    "VALUES (:id, :user_id, :message, :title, :watcheTool, :updateTool, CAST(:steps AS jsonb))"
+                ),
+                {
+                    "id": thread_id,
+                    "user_id": user_id,
+                    "message": messages_json,
+                    "title": title,
+                    "watcheTool": watch_tool,
+                    "updateTool": update_tool,
+                    "steps": json.dumps(new_steps),
+                },
+            )
+        else:
+            # Re-number new steps from where existing ones left off, in case the LLM restarted at 1
+            offset = len(existing_steps)
+            renumbered = [
+                {"step": offset + i + 1, "text": s["text"]}
+                for i, s in enumerate(new_steps)
+            ]
+            all_steps = existing_steps + renumbered
+            conn.execute(
+                text(
+                    'UPDATE "AGENT_THREAD" '
+                    'SET message = :message, updateTool = :updateTool, steps = CAST(:steps AS jsonb) '
+                    "WHERE id = :id AND user_id = :user_id"
+                ),
+                {
+                    "id": thread_id,
+                    "user_id": user_id,
+                    "message": messages_json,
+                    "updateTool": update_tool,
+                    "steps": json.dumps(all_steps),
+                },
+            )
         conn.commit()
-    
-    return JSONResponse(status_code=200, content={
-        "message": "Agent started", 
-        "thread_id": thread_id,
-        "response": {
-            "messages": messages_dict,
-            "content": agent_result.get('content', '')
-        }
-    })
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "Agent created" if is_new_thread else "Agent updated",
+            "thread_id": thread_id,
+            "response": {
+                "messages": messages_dict,
+                "content": extract_text(agent_result),
+            },
+        },
+    )
 
 
-
-@app.post("/agent/continue")
-async def task_continue_agent(data: ContinueAgent, req: Request):
-    prompt = data.prompt
+@app.get("/all-agents")
+async def get_all_agents(req: Request):
     user_id = req.state.user_id
-    thread_id = data.thread_id
-    
+
     with engine.connect() as conn:
-        thread_result = conn.execute(
-            text('SELECT * FROM "AGENT_THREAD" WHERE id = :id AND user_id = :user_id'),
+        result = conn.execute(
+            text('SELECT id, title, watcheTool, updateTool, steps FROM "AGENT_THREAD" WHERE user_id = :user_id'),
+            {"user_id": user_id},
+        )
+        rows = result.fetchall()
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "Agents retrieved",
+            "agents": [
+                {
+                    "id": row.id,
+                    "title": row.title,
+                    "watcheTool": row.watchetool,
+                    "updateTool": row.updatetool,
+                    "steps": row.steps,
+                }
+                for row in rows
+            ],
+        },
+    )
+
+@app.get('/agent/{thread_id}')
+async def get_agent(thread_id: str, req: Request):
+    user_id = req.state.user_id
+
+    with engine.connect() as conn:
+        result = conn.execute(
+            text('SELECT id, title, watcheTool, updateTool, steps, message FROM "AGENT_THREAD" WHERE id = :id AND user_id = :user_id'),
             {"id": thread_id, "user_id": user_id},
         )
-        thread_row = thread_result.fetchone()
-        
-        if not thread_row:
-            raise HTTPException(status_code=404, detail="Thread not found")
-        
-        user_result = conn.execute(
-            text('SELECT google_access_token FROM "USER" WHERE id = :id'),
-            {"id": user_id},
+        row = result.fetchone()
+
+    if not row:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "message": "Agent not found",
+            },
         )
-        user_row = user_result.fetchone()
-    
-    if not user_row or not user_row.google_access_token:
-        raise HTTPException(status_code=401, detail="Google account not connected")
-    
-    access_token = user_row.google_access_token
-    previous_messages = json.loads(thread_row.message) if thread_row.message else []
 
-    def _search_emails(query: str) -> str:
-        return search_emails(query=query, access_token=access_token)
-
-    def _send_email(to: str, subject: str, body: str) -> str:
-        return send_email(to=to, subject=subject, body=body, access_token=access_token)
-
-    def _reply_to_email(message_id: str, body: str) -> str:
-        return reply_to_email(message_id=message_id, body=body, access_token=access_token)
-
-    _search_emails.__name__ = "search_emails"
-    _search_emails.__doc__ = search_emails.__doc__
-    _send_email.__name__ = "send_email"
-    _send_email.__doc__ = send_email.__doc__
-    _reply_to_email.__name__ = "reply_to_email"
-    _reply_to_email.__doc__ = reply_to_email.__doc__
-
-    all_messages = previous_messages + [{"role": "user", "content": prompt}]
-    
-    agent = create_deep_agent(
-        model="google_genai:gemini-3.5-flash",
-        tools=[_search_emails, _send_email, _reply_to_email],
-        system_prompt=(
-            "You are a Gmail assistant. Use the available tools to help the user manage their emails. "
-            "You can search emails, send new emails, and reply to existing ones. "
-            "Always choose the right tool based on what the user is asking."
-        ),
+    return JSONResponse(
+        status_code=200,
+        content={
+            "message": "Agent retrieved",
+            "thread_id": thread_id,
+            "agent": {
+                "id": row.id,
+                "title": row.title,
+                "watcheTool": row.watchetool,
+                "updateTool": row.updatetool,
+                "steps": row.steps,
+                "message": row.message,
+            },
+        },
     )
-    
-    agent_result = await agent.invoke(
-        {"messages": all_messages}
-    )
-    
-    updated_messages = agent_result.get('messages', all_messages)
-    messages_dict = messages_to_dict(updated_messages)
-    messages_json = json.dumps(messages_dict)
-    
-    with engine.connect() as conn:
-        conn.execute(
-            text('UPDATE "AGENT_THREAD" SET status = :status, message = :message WHERE id = :id'),
-            {"id": thread_id, "status": "completed", "message": messages_json},
-        )
-        conn.commit()
-    
-    return JSONResponse(status_code=200, content={
-        "message": "Agent completed",
-        "thread_id": thread_id,
-        "response": {
-            "messages": messages_dict,
-            "content": agent_result.get('content', '')
-        }
-    })

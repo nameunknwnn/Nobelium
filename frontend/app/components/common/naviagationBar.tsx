@@ -1,4 +1,9 @@
+"use client"
+
+import { useRouter } from "next/navigation";
+
 export default function NavigationBar() {
+  const router = useRouter();
   return (
     <div className="flex justify-center">
       <div className="z-50 fixed mt-4 bg-black/70 backdrop-blur-md border border-white/10 shadow-2xl rounded-2xl py-2.5 px-5">
@@ -17,8 +22,10 @@ export default function NavigationBar() {
               Use Cases <span className="text-xs">▾</span>
             </button>
           </div>
-          <button className="text-sm font-medium bg-white text-black hover:bg-white/90 transition-colors px-4 py-1.5 rounded-lg shadow">
-            Book a demo
+          <button className="text-sm font-medium bg-white text-black hover:bg-white/90 transition-colors px-4 py-1.5 rounded-lg shadow" onClick={() => {
+            router.push("/signup")
+          }}>
+            login
           </button>
         </div>
       </div>

@@ -7,13 +7,6 @@ export default function (){
     const [email,setemail]=useState("");
     const [password,setpassword]=useState("");
     const router=useRouter()
-    useEffect(()=>{
-        const timeout=setTimeout(() => {
-            console.log(email,"blue")
-            console.log(password)
-        }, 1000);
-        return()=> clearTimeout(timeout)
-    },[email])
 
     const handleOnclick=async()=>{
         const response=await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/signin`,{
