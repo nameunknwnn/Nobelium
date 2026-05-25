@@ -82,9 +82,13 @@ export default function AgentThreadPage() {
         return;
       }
       const data = await res.json();
-      const t: AgentThread = data.agent;
-      setAgent(t);
-      setMessages(parseMessages(t.message));
+      setAgent(data);
+      setMessages(
+        (data.messages ?? []).map((m: { role: string; message: { content: string } }) => ({
+          role: m.role,
+          content: m.message?.content ?? "",
+        }))
+      );
     } catch {
       router.push("/user");
     } finally {
@@ -108,12 +112,9 @@ export default function AgentThreadPage() {
         body: JSON.stringify({ prompt: userMsg.content, thread_id: slug }),
       });
       const data = await res.json();
-      const newMsgs = data.response?.messages ?? [];
-      const parsed = parseMessages(newMsgs);
-      // append only the new assistant reply
-      const lastAssistant = [...parsed].reverse().find((m) => m.role === "assistant");
-      if (lastAssistant) {
-        setMessages((prev) => [...prev, lastAssistant]);
+      const content = data.response?.content ?? "";
+      if (content) {
+        setMessages((prev) => [...prev, { role: "assistant", content }]);
       }
       // refresh metadata (steps may have updated)
       await fetchThread();

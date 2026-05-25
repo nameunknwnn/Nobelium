@@ -11,24 +11,20 @@ import bcrypt
 import uuid
 import httpx
 import os
+from datetime import datetime, timezone, timedelta
 import base64
 import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from deepagents import create_deep_agent
-from google import genai
-
-
 from middleware.authmiddleware import AuthMiddleware
 
-os.environ["GEMINI_API_KEY"] = settings.GEMINI_API_KEY
-os.environ["GOOGLE_API_KEY"] = settings.GOOGLE_API_KEY
-# os.environ["OPENROUTER_API_KEY"] = settings.OPENROUTER_API_KEY
+os.environ["OPENROUTER_API_KEY"] = settings.OPENROUTER_API_KEY
 
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 app=FastAPI()
-client = genai.Client()
 
 # Add CORS middleware
 app.add_middleware(
@@ -143,6 +139,8 @@ async def google_oauth_callback(code: str):
     token_data = token_resp.json()
     access_token = token_data.get("access_token")
     refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in", 3600)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
     async with httpx.AsyncClient() as client:
         userinfo_resp = await client.get(
@@ -163,13 +161,13 @@ async def google_oauth_callback(code: str):
         if not user:
             new_id = uuid.uuid4()
             conn.execute(
-                text('INSERT INTO "USER" (id, email, password, google_access_token, google_refresh_token) VALUES (:id, :email, :password, :access_token, :refresh_token)'),
-                {"id": new_id, "email": email, "password": "", "access_token": access_token, "refresh_token": refresh_token},
+                text('INSERT INTO "USER" (id, email, password, google_access_token, google_refresh_token, google_token_expires_at) VALUES (:id, :email, :password, :access_token, :refresh_token, :expires_at)'),
+                {"id": new_id, "email": email, "password": "", "access_token": access_token, "refresh_token": refresh_token, "expires_at": expires_at},
             )
         else:
             conn.execute(
-                text('UPDATE "USER" SET google_access_token = :access_token, google_refresh_token = :refresh_token WHERE email = :email'),
-                {"access_token": access_token, "refresh_token": refresh_token, "email": email},
+                text('UPDATE "USER" SET google_access_token = :access_token, google_refresh_token = :refresh_token, google_token_expires_at = :expires_at WHERE email = :email'),
+                {"access_token": access_token, "refresh_token": refresh_token, "expires_at": expires_at, "email": email},
             )
         conn.commit()
 
@@ -187,6 +185,52 @@ async def google_oauth_callback(code: str):
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
+
+
+def get_valid_google_token(user_id: str) -> str:
+    """Return a working Google access token, refreshing via the stored
+    refresh token if the saved expires_at timestamp shows it's expired."""
+    with engine.connect() as conn:
+        result = conn.execute(
+            text('SELECT google_access_token, google_refresh_token, google_token_expires_at FROM "USER" WHERE id = :id'),
+            {"id": user_id},
+        )
+        row = result.fetchone()
+
+    if not row or not row.google_refresh_token:
+        raise HTTPException(status_code=401, detail="Google account not connected. Please sign in with Google first.")
+
+    # Still valid — return as-is (5-min buffer to avoid edge-case expiry mid-request)
+    if row.google_access_token and row.google_token_expires_at:
+        expires_at = row.google_token_expires_at
+        if not expires_at.tzinfo:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+            return row.google_access_token
+
+    # Expired or missing — refresh
+    resp = httpx.post(GOOGLE_TOKEN_URL, data={
+        "client_id": settings.CLIENT_ID,
+        "client_secret": settings.CLIENT_SECRET,
+        "refresh_token": row.google_refresh_token,
+        "grant_type": "refresh_token",
+    })
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Failed to refresh Google token. Please sign in with Google again.")
+
+    token_data = resp.json()
+    new_access_token = token_data.get("access_token")
+    expires_in = token_data.get("expires_in", 3600)
+    new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+    with engine.connect() as conn:
+        conn.execute(
+            text('UPDATE "USER" SET google_access_token = :token, google_token_expires_at = :expires_at WHERE id = :id'),
+            {"token": new_access_token, "expires_at": new_expires_at, "id": user_id},
+        )
+        conn.commit()
+
+    return new_access_token
 
 
 def messages_to_dict(messages):
@@ -479,7 +523,12 @@ def create_google_meet(summary: str, start_time: str, end_time: str, description
 
 
 def extract_text(agent_result):
-    content = agent_result.get("content", "")
+    messages = agent_result.get("messages", [])
+    if not messages:
+        return ""
+
+    last_msg = messages[-1]
+    content = getattr(last_msg, "content", "")
 
     if isinstance(content, str):
         return content
@@ -507,7 +556,7 @@ TOOL_DISPLAY_NAMES = {
 
 def extract_agent_metadata(prompt: str, existing_steps: list | None = None) -> dict:
     """
-    Dedicated Gemini call that extracts structured metadata from the user's prompt.
+    Dedicated OpenRouter call that extracts structured metadata from the user's prompt.
     - On initial call (existing_steps=None): returns title, watcheTool, updateTool, new_steps
     - On subsequent calls: returns updateTool (if changed) and only genuinely new steps
     """
@@ -554,12 +603,19 @@ Rules:
   Return an empty array [] if there are no new capabilities introduced.
 """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=extraction_prompt,
-    )
+    headers = {
+        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "openai/gpt-oss-120b:free",
+        "messages": [{"role": "user", "content": extraction_prompt}],
+        "temperature": 0,
+    }
+    resp = httpx.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
 
-    raw = response.text.strip()
+    raw = resp.json()["choices"][0]["message"]["content"].strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -579,19 +635,11 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
     if is_new_thread:
         thread_id = str(uuid.uuid4())
 
-    with engine.connect() as conn:
-        result = conn.execute(
-            text('SELECT google_access_token FROM "USER" WHERE id = :id'),
-            {"id": user_id},
-        )
-        row = result.fetchone()
-    if not row or not row.google_access_token:
-        raise HTTPException(status_code=401, detail="Google account not connected. Please sign in with Google first.")
+    access_token = get_valid_google_token(user_id)
 
-    access_token = row.google_access_token
-
-    # Fetch existing thread data for continuation
+    # Fetch existing thread data and conversation history for continuation
     existing_steps: list = []
+    conversation_history: list[dict] = []
     if not is_new_thread:
         with engine.connect() as conn:
             result = conn.execute(
@@ -601,6 +649,15 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
             thread_row = result.fetchone()
             if thread_row and thread_row.steps:
                 existing_steps = thread_row.steps
+
+            msg_result = conn.execute(
+                text('SELECT role, message FROM "MESSAGE" WHERE thread_id = :id ORDER BY created_at ASC'),
+                {"id": thread_id},
+            )
+            for row in msg_result.fetchall():
+                content = row.message.get("content", "") if isinstance(row.message, dict) else ""
+                if content:
+                    conversation_history.append({"role": row.role, "content": content})
 
     def _search_emails(query: str) -> str:
         return search_emails(query=query, access_token=access_token)
@@ -634,7 +691,7 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
     _create_google_meet.__doc__ = create_google_meet.__doc__
 
     agent = create_deep_agent(
-        model="google_genai:gemini-2.0-flash",
+        model="openrouter:openai/gpt-oss-120b:free",
         tools=[_search_emails, _send_email, _reply_to_email, _search_calendar_events, _create_calendar_event, _create_google_meet],
         system_prompt=(
             "You are a productivity assistant with access to Gmail, Google Calendar, and Google Meet. "
@@ -644,11 +701,10 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
             "Always choose the right tool based on what the user is asking."
         ),
     )
-    agent_result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+    all_messages = conversation_history + [{"role": "user", "content": prompt}]
+    agent_result = agent.invoke({"messages": all_messages})
 
-    messages_list = agent_result.get("messages", [])
-    messages_dict = messages_to_dict(messages_list)
-    messages_json = json.dumps(messages_dict)
+    agent_content = extract_text(agent_result)
 
     # Extract metadata via a dedicated LLM call
     metadata = extract_agent_metadata(
@@ -664,21 +720,19 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
             watch_tool: str = metadata.get("watcheTool", "")
             conn.execute(
                 text(
-                    'INSERT INTO "AGENT_THREAD" (id, user_id, message, title, "watcheTool", "updateTool", steps) '
-                    "VALUES (:id, :user_id, :message, :title, :watcheTool, :updateTool, CAST(:steps AS jsonb))"
+                    'INSERT INTO "AGENT_THREAD" (id, user_id, title, watchetool, updatetool, steps) '
+                    "VALUES (:id, :user_id, :title, :watchetool, :updatetool, CAST(:steps AS jsonb))"
                 ),
                 {
                     "id": thread_id,
                     "user_id": user_id,
-                    "message": messages_json,
                     "title": title,
-                    "watcheTool": watch_tool,
-                    "updateTool": update_tool,
+                    "watchetool": watch_tool,
+                    "updatetool": update_tool,
                     "steps": json.dumps(new_steps),
                 },
             )
         else:
-            # Re-number new steps from where existing ones left off, in case the LLM restarted at 1
             offset = len(existing_steps)
             renumbered = [
                 {"step": offset + i + 1, "text": s["text"]}
@@ -688,17 +742,43 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
             conn.execute(
                 text(
                     'UPDATE "AGENT_THREAD" '
-                    'SET message = :message, "updateTool" = :updateTool, steps =CAST(:steps AS jsonb) '
+                    "SET updatetool = :updatetool, steps = CAST(:steps AS jsonb) "
                     "WHERE id = :id AND user_id = :user_id"
                 ),
                 {
                     "id": thread_id,
                     "user_id": user_id,
-                    "message": messages_json,
-                    "updateTool": update_tool,
+                    "updatetool": update_tool,
                     "steps": json.dumps(all_steps),
                 },
             )
+
+        # Store the user message
+        conn.execute(
+            text(
+                'INSERT INTO "MESSAGE" (id, thread_id, message, role) '
+                "VALUES (:id, :thread_id, CAST(:message AS jsonb), 'user')"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "thread_id": thread_id,
+                "message": json.dumps({"content": prompt}),
+            },
+        )
+
+        # Store the assistant response
+        conn.execute(
+            text(
+                'INSERT INTO "MESSAGE" (id, thread_id, message, role) '
+                "VALUES (:id, :thread_id, CAST(:message AS jsonb), 'assistant')"
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "thread_id": thread_id,
+                "message": json.dumps({"content": agent_content}),
+            },
+        )
+
         conn.commit()
 
     return JSONResponse(
@@ -707,9 +787,75 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
             "message": "Agent created" if is_new_thread else "Agent updated",
             "thread_id": thread_id,
             "response": {
-                "messages": messages_dict,
-                "content": extract_text(agent_result),
+                "content": agent_content,
             },
         },
     )
 
+
+
+@app.get("/all-agents")
+async def get_all_agents(req: Request):
+    user_id = req.state.user_id
+    with engine.connect() as conn:
+        result = conn.execute(
+            text('SELECT * FROM "AGENT_THREAD" WHERE user_id = :user_id'),
+            {"user_id": user_id},
+        )
+        agents = result.fetchall()
+    return JSONResponse(
+        status_code=200,
+        content={
+            "agents": [
+                {
+                    "id": agent.id,
+                    "title": agent.title,
+                    "watcheTool": agent.watchetool,
+                    "updateTool": agent.updatetool,
+                    "steps": agent.steps,
+                }
+                for agent in agents
+            ],
+        },
+    )
+
+
+@app.get("/agent/{thread_id}")
+async def get_agent(thread_id: str, req: Request):
+    user_id = req.state.user_id
+    with engine.connect() as conn:
+        result = conn.execute(
+            text('SELECT * FROM "AGENT_THREAD" WHERE id = :id AND user_id = :user_id'),
+            {"id": thread_id, "user_id": user_id},
+        )
+        agent = result.fetchone()
+        result = conn.execute(
+            text('SELECT * FROM "MESSAGE" WHERE thread_id = :id'),
+            {"id": thread_id},
+        )
+        messages = result.fetchall()
+        
+    if not agent:
+        return JSONResponse(
+            status_code=404,
+            content={"message": "Agent not found"},
+        )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "id": agent.id,
+            "title": agent.title,
+            "watcheTool": agent.watchetool,
+            "updateTool": agent.updatetool,
+            "steps": agent.steps,
+            "messages": [
+                {
+                    "id": message.id,
+                    "thread_id": message.thread_id,
+                    "message": message.message,
+                    "role": message.role,
+                }
+                for message in messages
+            ],
+        },
+    )
