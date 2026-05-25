@@ -24,6 +24,15 @@ os.environ["OPENROUTER_API_KEY"] = settings.OPENROUTER_API_KEY
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+IS_PRODUCTION = not settings.FRONTEND_URL.startswith("http://localhost")
+
+COOKIE_SETTINGS = {
+    "key": "token",
+    "httponly": True,
+    "samesite": "none" if IS_PRODUCTION else "lax",
+    "secure": IS_PRODUCTION,
+}
+
 app=FastAPI()
 
 # Add CORS middleware
@@ -93,13 +102,7 @@ async def signin(req:SignInSchema):
     if bcrypt.checkpw(password.encode('utf-8'), hashed):
         token=jwt.encode({"sub": email},settings.JWT_SECRET,algorithm="HS256")
         response=JSONResponse({"message":"signin successful","token":token})
-        response.set_cookie(
-            key="token",
-            value=token,
-            httponly=True,
-            samesite="lax",
-            secure=False 
-        )
+        response.set_cookie(value=token, **COOKIE_SETTINGS)
         return response
     else:
         return({"message":"wrong password"})
@@ -173,13 +176,7 @@ async def google_oauth_callback(code: str):
 
     jwt_token = jwt.encode({"sub": email}, settings.JWT_SECRET, algorithm="HS256")
     response= RedirectResponse(url=f"{settings.FRONTEND_URL}/user")
-    response.set_cookie(
-        key="token",
-        value=jwt_token,
-        httponly=True,
-        samesite="lax",
-        secure=False 
-    )
+    response.set_cookie(value=jwt_token, **COOKIE_SETTINGS)
     return response
 
 
