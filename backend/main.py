@@ -119,7 +119,7 @@ async def google_oauth():
         "client_id": settings.CLIENT_ID,
         "redirect_uri": settings.REDIRECT_URI,
         "response_type": "code",
-        "scope": "openid email profile https://www.googleapis.com/auth/gmail.modify",
+        "scope": "openid email profile https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar",
         "access_type": "offline",
         "prompt": "consent",
     }
@@ -186,6 +186,7 @@ async def google_oauth_callback(code: str):
 
 
 GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 
 
 def messages_to_dict(messages):
@@ -333,6 +334,150 @@ def reply_to_email(message_id: str, body: str, access_token: str) -> str:
 
 
 
+def search_calendar_events(query: str, time_min: str, time_max: str, access_token: str) -> str:
+    """Search Google Calendar events within a time range.
+    query: free-text search term to filter events (can be empty string for all events).
+    time_min: start of time range in RFC3339 format (e.g. '2025-01-01T00:00:00Z').
+    time_max: end of time range in RFC3339 format (e.g. '2025-12-31T23:59:59Z').
+    access_token is the user's Google OAuth access token.
+    Returns a JSON string with a list of calendar events including id, summary, start, end, and location."""
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    params = {
+        "timeMin": time_min,
+        "timeMax": time_max,
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": 20,
+    }
+    if query:
+        params["q"] = query
+
+    resp = httpx.get(
+        f"{CALENDAR_API_BASE}/calendars/primary/events",
+        headers=headers,
+        params=params,
+    )
+    if resp.status_code != 200:
+        return json.dumps({"error": f"Calendar API error: {resp.text}"})
+
+    events = resp.json().get("items", [])
+    if not events:
+        return json.dumps({"results": [], "message": "No calendar events found matching your query."})
+
+    results = []
+    for event in events:
+        results.append({
+            "id": event.get("id"),
+            "summary": event.get("summary", "(no title)"),
+            "start": event.get("start", {}).get("dateTime") or event.get("start", {}).get("date", ""),
+            "end": event.get("end", {}).get("dateTime") or event.get("end", {}).get("date", ""),
+            "location": event.get("location", ""),
+            "description": event.get("description", ""),
+            "htmlLink": event.get("htmlLink", ""),
+            "hangoutLink": event.get("hangoutLink", ""),
+        })
+
+    return json.dumps({"results": results})
+
+
+def create_calendar_event(summary: str, start_time: str, end_time: str, description: str, attendees: str, access_token: str) -> str:
+    """Create a new Google Calendar event.
+    summary: title of the event.
+    start_time: event start in RFC3339 format (e.g. '2025-06-01T10:00:00-05:00').
+    end_time: event end in RFC3339 format (e.g. '2025-06-01T11:00:00-05:00').
+    description: optional description/notes for the event.
+    attendees: comma-separated email addresses of attendees (can be empty string for no attendees).
+    access_token is the user's Google OAuth access token.
+    Returns a JSON string with the created event details."""
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+    event_body = {
+        "summary": summary,
+        "start": {"dateTime": start_time},
+        "end": {"dateTime": end_time},
+    }
+    if description:
+        event_body["description"] = description
+    if attendees:
+        event_body["attendees"] = [{"email": e.strip()} for e in attendees.split(",") if e.strip()]
+
+    resp = httpx.post(
+        f"{CALENDAR_API_BASE}/calendars/primary/events",
+        headers=headers,
+        json=event_body,
+    )
+    if resp.status_code not in (200, 201):
+        return json.dumps({"error": f"Failed to create calendar event: {resp.text}"})
+
+    created = resp.json()
+    return json.dumps({
+        "success": True,
+        "eventId": created.get("id"),
+        "summary": created.get("summary"),
+        "start": created.get("start", {}).get("dateTime", ""),
+        "end": created.get("end", {}).get("dateTime", ""),
+        "htmlLink": created.get("htmlLink", ""),
+    })
+
+
+def create_google_meet(summary: str, start_time: str, end_time: str, description: str, attendees: str, access_token: str) -> str:
+    """Create a Google Meet meeting by creating a calendar event with a video conference link.
+    summary: title of the meeting.
+    start_time: meeting start in RFC3339 format (e.g. '2025-06-01T10:00:00-05:00').
+    end_time: meeting end in RFC3339 format (e.g. '2025-06-01T11:00:00-05:00').
+    description: optional description/agenda for the meeting.
+    attendees: comma-separated email addresses of attendees (can be empty string for no attendees).
+    access_token is the user's Google OAuth access token.
+    Returns a JSON string with the meeting details including the Google Meet link."""
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+    event_body = {
+        "summary": summary,
+        "start": {"dateTime": start_time},
+        "end": {"dateTime": end_time},
+        "conferenceData": {
+            "createRequest": {
+                "requestId": str(uuid.uuid4()),
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        },
+    }
+    if description:
+        event_body["description"] = description
+    if attendees:
+        event_body["attendees"] = [{"email": e.strip()} for e in attendees.split(",") if e.strip()]
+
+    resp = httpx.post(
+        f"{CALENDAR_API_BASE}/calendars/primary/events",
+        headers=headers,
+        params={"conferenceDataVersion": 1},
+        json=event_body,
+    )
+    if resp.status_code not in (200, 201):
+        return json.dumps({"error": f"Failed to create Google Meet: {resp.text}"})
+
+    created = resp.json()
+    meet_link = created.get("hangoutLink", "")
+    conference_data = created.get("conferenceData", {})
+    if not meet_link and conference_data:
+        entry_points = conference_data.get("entryPoints", [])
+        for ep in entry_points:
+            if ep.get("entryPointType") == "video":
+                meet_link = ep.get("uri", "")
+                break
+
+    return json.dumps({
+        "success": True,
+        "eventId": created.get("id"),
+        "summary": created.get("summary"),
+        "start": created.get("start", {}).get("dateTime", ""),
+        "end": created.get("end", {}).get("dateTime", ""),
+        "meetLink": meet_link,
+        "htmlLink": created.get("htmlLink", ""),
+    })
+
+
 def extract_text(agent_result):
     content = agent_result.get("content", "")
 
@@ -354,6 +499,9 @@ TOOL_DISPLAY_NAMES = {
     "search_emails": "Search Gmail",
     "send_email": "Send Gmail",
     "reply_to_email": "Reply Gmail",
+    "search_calendar_events": "Google Calendar",
+    "create_calendar_event": "Google Calendar",
+    "create_google_meet": "Meet",
 }
 
 
@@ -362,54 +510,63 @@ def extract_agent_metadata(prompt: str, existing_steps: list | None = None) -> d
     Dedicated Gemini call that extracts structured metadata from the user's prompt.
     - On initial call (existing_steps=None): returns title, watcheTool, updateTool, new_steps
     - On subsequent calls: returns updateTool (if changed) and only genuinely new steps
-
-    TODO: remove stub and restore the real Gemini call once quota is available.
     """
     is_initial = existing_steps is None
+    tools_desc = "\n".join(f'- {k} → "{v}"' for k, v in TOOL_DISPLAY_NAMES.items())
+
+    existing_note = ""
+    if existing_steps:
+        existing_note = (
+            f"\nSteps already recorded for this automation: {json.dumps(existing_steps)}\n"
+            "Only include steps in new_steps that represent genuinely NEW capabilities "
+            "not already covered by the existing steps. Return an empty array if nothing is new."
+        )
+
+    title_field = '"title": "4-7 word human-readable title for the automation",' if is_initial else ""
+
     next_step_number = (len(existing_steps) + 1) if existing_steps else 1
 
-    # --- STUB: hardcoded responses to avoid Gemini quota exhaustion during dev ---
-    if is_initial:
-        return {
-            "title": "Auto-Reply Order Emails",
-            "watcheTool": "Search Gmail",
-            "updateTool": "Reply Gmail",
-            "new_steps": [
-                {"step": 1, "text": "Monitor Gmail for incoming order emails"},
-                {"step": 2, "text": "Read and parse email content"},
-                {"step": 3, "text": "Send automated reply to sender"},
-            ],
-        }
-    else:
-        return {
-            "watcheTool": "Search Gmail",
-            "updateTool": "Reply Gmail",
-            "new_steps": [
-                {"step": next_step_number, "text": "Stub: new step from follow-up prompt"},
-            ],
-        }
-    # --- END STUB ---
+    extraction_prompt = f"""Analyze this automation request and return a JSON object.
 
-    # Real implementation (restore when quota is available):
-    # is_initial = existing_steps is None
-    # tools_desc = "\n".join(f'- {k} → "{v}"' for k, v in TOOL_DISPLAY_NAMES.items())
-    # existing_note = ""
-    # if existing_steps:
-    #     existing_note = (
-    #         f"\nSteps already recorded for this automation: {json.dumps(existing_steps)}\n"
-    #         "Only include steps in new_steps that represent genuinely NEW capabilities "
-    #         "not already covered by the existing steps. Return an empty array if nothing is new."
-    #     )
-    # title_field = '"title": "4-7 word human-readable title for the automation",' if is_initial else ""
-    # next_step_number = (len(existing_steps) + 1) if existing_steps else 1
-    # extraction_prompt = f"""..."""  # (full prompt as written above)
-    # response = client.models.generate_content(model="gemini-2.0-flash", contents=extraction_prompt)
-    # raw = response.text.strip()
-    # if raw.startswith("```"):
-    #     raw = raw.split("```")[1]
-    #     if raw.startswith("json"):
-    #         raw = raw[4:]
-    # return json.loads(raw.strip())
+User prompt: "{prompt}"
+
+Available tools and their display names:
+{tools_desc}
+{existing_note}
+Return ONLY valid JSON with no markdown or explanation:
+{{
+  {title_field}
+  "watcheTool": "display name of the PRIMARY source/trigger tool (what this automation monitors)",
+  "updateTool": "display name of the LAST output/action tool in the chain",
+  "new_steps": [{{"step": {next_step_number}, "text": "short step description"}}, ...]
+}}
+
+Rules:
+- watcheTool: the input source (e.g. "Search Gmail" when monitoring inbox)
+- updateTool: the final action taken (e.g. "Reply Gmail" when sending replies); update this if the new prompt introduces a different output tool
+- new_steps: number the steps starting from {next_step_number} (continuing from existing steps).
+  Each step is an object with "step" (integer) and "text" (short plain-English description).
+  Example format:
+  [
+    {{"step": {next_step_number}, "text": "Monitors Gmail for incoming order emails"}},
+    {{"step": {next_step_number + 1}, "text": "Extracts PO number, quantities, sizes, and customer details"}}
+  ]
+  Return an empty array [] if there are no new capabilities introduced.
+"""
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=extraction_prompt,
+    )
+
+    raw = response.text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    return json.loads(raw)
 
 
 @app.post("/agent")
@@ -454,34 +611,40 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
     def _reply_to_email(message_id: str, body: str) -> str:
         return reply_to_email(message_id=message_id, body=body, access_token=access_token)
 
+    def _search_calendar_events(query: str, time_min: str, time_max: str) -> str:
+        return search_calendar_events(query=query, time_min=time_min, time_max=time_max, access_token=access_token)
+
+    def _create_calendar_event(summary: str, start_time: str, end_time: str, description: str, attendees: str) -> str:
+        return create_calendar_event(summary=summary, start_time=start_time, end_time=end_time, description=description, attendees=attendees, access_token=access_token)
+
+    def _create_google_meet(summary: str, start_time: str, end_time: str, description: str, attendees: str) -> str:
+        return create_google_meet(summary=summary, start_time=start_time, end_time=end_time, description=description, attendees=attendees, access_token=access_token)
+
     _search_emails.__name__ = "search_emails"
     _search_emails.__doc__ = search_emails.__doc__
     _send_email.__name__ = "send_email"
     _send_email.__doc__ = send_email.__doc__
     _reply_to_email.__name__ = "reply_to_email"
     _reply_to_email.__doc__ = reply_to_email.__doc__
+    _search_calendar_events.__name__ = "search_calendar_events"
+    _search_calendar_events.__doc__ = search_calendar_events.__doc__
+    _create_calendar_event.__name__ = "create_calendar_event"
+    _create_calendar_event.__doc__ = create_calendar_event.__doc__
+    _create_google_meet.__name__ = "create_google_meet"
+    _create_google_meet.__doc__ = create_google_meet.__doc__
 
-    # --- STUB: skip agent invocation to avoid Gemini quota exhaustion during dev ---
-    agent_result = {
-        "messages": [
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": "[stub] Agent response placeholder — real Gemini call disabled."},
-        ],
-        "content": "[stub] Agent response placeholder — real Gemini call disabled.",
-    }
-    # --- END STUB ---
-
-    # Real implementation (restore when quota is available):
-    # agent = create_deep_agent(
-    #     model="google_genai:gemini-2.0-flash",
-    #     tools=[_search_emails, _send_email, _reply_to_email],
-    #     system_prompt=(
-    #         "You are a Gmail assistant. Use the available tools to help the user manage their emails. "
-    #         "You can search emails, send new emails, and reply to existing ones. "
-    #         "Always choose the right tool based on what the user is asking."
-    #     ),
-    # )
-    # agent_result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+    agent = create_deep_agent(
+        model="google_genai:gemini-2.0-flash",
+        tools=[_search_emails, _send_email, _reply_to_email, _search_calendar_events, _create_calendar_event, _create_google_meet],
+        system_prompt=(
+            "You are a productivity assistant with access to Gmail, Google Calendar, and Google Meet. "
+            "Use the available tools to help the user manage their emails, calendar events, and meetings. "
+            "You can search emails, send new emails, reply to existing ones, search calendar events, "
+            "create calendar events, and create Google Meet meetings. "
+            "Always choose the right tool based on what the user is asking."
+        ),
+    )
+    agent_result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
 
     messages_list = agent_result.get("messages", [])
     messages_dict = messages_to_dict(messages_list)
@@ -501,7 +664,7 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
             watch_tool: str = metadata.get("watcheTool", "")
             conn.execute(
                 text(
-                    'INSERT INTO "AGENT_THREAD" (id, user_id, message, title, watcheTool, updateTool, steps) '
+                    'INSERT INTO "AGENT_THREAD" (id, user_id, message, title, "watcheTool", "updateTool", steps) '
                     "VALUES (:id, :user_id, :message, :title, :watcheTool, :updateTool, CAST(:steps AS jsonb))"
                 ),
                 {
@@ -525,7 +688,7 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
             conn.execute(
                 text(
                     'UPDATE "AGENT_THREAD" '
-                    'SET message = :message, updateTool = :updateTool, steps = CAST(:steps AS jsonb) '
+                    'SET message = :message, "updateTool" = :updateTool, steps =CAST(:steps AS jsonb) '
                     "WHERE id = :id AND user_id = :user_id"
                 ),
                 {
@@ -550,66 +713,3 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
         },
     )
 
-
-@app.get("/all-agents")
-async def get_all_agents(req: Request):
-    user_id = req.state.user_id
-
-    with engine.connect() as conn:
-        result = conn.execute(
-            text('SELECT id, title, watcheTool, updateTool, steps FROM "AGENT_THREAD" WHERE user_id = :user_id'),
-            {"user_id": user_id},
-        )
-        rows = result.fetchall()
-
-    return JSONResponse(
-        status_code=200,
-        content={
-            "message": "Agents retrieved",
-            "agents": [
-                {
-                    "id": row.id,
-                    "title": row.title,
-                    "watcheTool": row.watchetool,
-                    "updateTool": row.updatetool,
-                    "steps": row.steps,
-                }
-                for row in rows
-            ],
-        },
-    )
-
-@app.get('/agent/{thread_id}')
-async def get_agent(thread_id: str, req: Request):
-    user_id = req.state.user_id
-
-    with engine.connect() as conn:
-        result = conn.execute(
-            text('SELECT id, title, watcheTool, updateTool, steps, message FROM "AGENT_THREAD" WHERE id = :id AND user_id = :user_id'),
-            {"id": thread_id, "user_id": user_id},
-        )
-        row = result.fetchone()
-
-    if not row:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "message": "Agent not found",
-            },
-        )
-
-    return JSONResponse(
-        status_code=200,
-        content={
-            "message": "Agent retrieved",
-            "thread_id": thread_id,
-            "agent": {
-                "id": row.id,
-                "title": row.title,
-                "watcheTool": row.watchetool,
-                "updateTool": row.updatetool,
-                "steps": row.steps,
-                "message": row.message,
-            },
-        },
-    )
