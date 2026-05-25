@@ -254,11 +254,12 @@ def messages_to_dict(messages):
 @app.get("/me")
 def get_me(request: Request):
     token = request.cookies.get("token")
-
+    print (token)
     if not token:
         raise HTTPException(status_code=401)
 
     payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+    print (payload)
     return {"email": payload["sub"]}
 
 
