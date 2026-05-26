@@ -7,37 +7,42 @@ const videos = [
   {
     id: "I_wNKdLoyCk",
     title: "Making the frontend",
-    description: "Deep dive into how the AI agent orchestration system was built from scratch.",
+    description: "learning about trelium and starting building the frontend from scratch",
   },
   {
     id: "txkH3B0w82w",
     title: "Making the frontend (continued)",
-    description: "Implementing secure Google OAuth and Gmail watching capabilities.",
+    description: "building the frontend from scratch",
   },
   {
     id: "_KyghtwhSfo",
     title: "Building the Backend",
-    description: "Building real-time SSE streaming to show agent execution live.",
+    description: "Building the backend from scratch ",
   },
   {
     id: "GYA24KLOOZs",
     title: "Integrating the frontend and the Backend",
-    description: "Enabling agents to read, write, and update spreadsheets programmatically.",
+    description: "making connectinons between the fastapi be and the next js react frontend",
   },
   {
     id: "hM9MRj4Jv5E",
     title: "Integrating the frontend and the Backend and adding the oauth",
-    description: "Designing the landing page with glassmorphism, animations, and responsive layouts.",
+    description: "making connectinons between the fastapi be and the next js react frontend",
   },
   {
     id: "AGW-YFgrGNc",
     title: "Completing the v1",
-    description: "JWT auth with HTTP-only cookies and protected route middleware.",
+    description: "trying to make the complete v1 version",
   },
   {
     id: "_kGeC9vx4-0",
     title: "fixing basic bugs ",
-    description: "Full walkthrough of the Nobelium platform from signup to running an agent.",
+    description: "fixing the backend oauth bugs and other sql bugs",
+  },
+  {
+    id: "oyGL7sIhtVY",
+    title: "finishing the v1 of nobelium clone of trelium ",
+    description: "completing the v1 and deploying the changes.",
   },
 ];
 
