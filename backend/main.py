@@ -82,19 +82,31 @@ init_db()
 
 @app.post("/send-email")
 async def send_email(req: SendEmailSchema):
-    email = req.email
-    content = req.content
     try:
         response = resend.Emails.send({
-            "from": "Nobelium <app@nameunknwn.com>",
-            "to": "Name <adirawat2016@gmail.com>",
+            "from": "Nobelium <onboarding@resend.dev>",  
+            "to": ["adirawat2016@gmail.com"],            
+            "reply_to": req.email,                       
             "subject": "Nobelium subscriber's mail",
-            "html": f"<div>{content}</div>"
+            "html": f"""
+                <h2>New Message from Nobelium</h2>
+                <p><strong>User Email:</strong> {req.email}</p>
+                <p><strong>Message:</strong></p>
+                <div>{req.content}</div>
+            """
         })
-        return JSONResponse(status_code=200, content={"message": "Email sent successfully"})
+
+        return JSONResponse(
+            status_code=200,
+            content={"message": "Email sent successfully"}
+        )
+
     except Exception as e:
         print(f"Error sending email: {e}")
-        return JSONResponse(status_code=500, content={"message": "Failed to send email"})
+        return JSONResponse(
+            status_code=500,
+            content={"message": "Failed to send email"}
+        )
 
 
 @app.post("/signup")
