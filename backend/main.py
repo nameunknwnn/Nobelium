@@ -1,6 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
-from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from database import engine
@@ -14,13 +13,17 @@ import os
 from datetime import datetime, timezone, timedelta
 import base64
 import json
+import asyncio
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from deepagents import create_deep_agent
 from middleware.authmiddleware import AuthMiddleware
+import resend
 
 os.environ["OPENROUTER_API_KEY"] = settings.OPENROUTER_API_KEY
+resend.api_key = settings.RESEND_API_KEY
+
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -63,6 +66,10 @@ class SuggestAgent(BaseModel):
     prompt: str
     thread_id: str | None = None
 
+class SendEmailSchema(BaseModel):
+    email:str
+    content:str
+
 
 def init_db():
     conn=engine.connect()
@@ -72,6 +79,22 @@ def init_db():
 
 init_db() 
 
+
+@app.post("/send-email")
+async def send_email(req: SendEmailSchema):
+    email = req.email
+    content = req.content
+    try:
+        response = resend.Emails.send({
+            "from": "Nobelium <app@nameunknwn.com>",
+            "to": "Name <adirawat2016@gmail.com>",
+            "subject": "Nobelium subscriber's mail",
+            "html": f"<div>{content}</div>"
+        })
+        return JSONResponse(status_code=200, content={"message": "Email sent successfully"})
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return JSONResponse(status_code=500, content={"message": "Failed to send email"})
 
 
 @app.post("/signup")
@@ -635,7 +658,6 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
 
     access_token = get_valid_google_token(user_id)
 
-    # Fetch existing thread data and conversation history for continuation
     existing_steps: list = []
     conversation_history: list[dict] = []
     if not is_new_thread:
@@ -700,95 +722,105 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
         ),
     )
     all_messages = conversation_history + [{"role": "user", "content": prompt}]
-    agent_result = agent.invoke({"messages": all_messages})
 
-    agent_content = extract_text(agent_result)
+    async def event_stream():
+        full_content = ""
+        try:
+            async for event in agent.astream_events({"messages": all_messages}, version="v2"):
+                if event["event"] != "on_chat_model_stream":
+                    continue
+                chunk = event["data"]["chunk"]
+                token = ""
+                if hasattr(chunk, "content"):
+                    c = chunk.content
+                    if isinstance(c, str):
+                        token = c
+                    elif isinstance(c, list):
+                        for item in c:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                token += item.get("text", "")
+                if token:
+                    full_content += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            return
 
-    # Extract metadata via a dedicated LLM call
-    metadata = extract_agent_metadata(
-        prompt,
-        existing_steps=None if is_new_thread else existing_steps,
-    )
-    new_steps: list = metadata.get("new_steps", [])
-    update_tool: str = metadata.get("updateTool", "")
-
-    with engine.connect() as conn:
-        if is_new_thread:
-            title: str = metadata.get("title", "")
-            watch_tool: str = metadata.get("watcheTool", "")
-            conn.execute(
-                text(
-                    'INSERT INTO "AGENT_THREAD" (id, user_id, title, watchetool, updatetool, steps) '
-                    "VALUES (:id, :user_id, :title, :watchetool, :updatetool, CAST(:steps AS jsonb))"
-                ),
-                {
-                    "id": thread_id,
-                    "user_id": user_id,
-                    "title": title,
-                    "watchetool": watch_tool,
-                    "updatetool": update_tool,
-                    "steps": json.dumps(new_steps),
-                },
+        def _save():
+            metadata = extract_agent_metadata(
+                prompt,
+                existing_steps=None if is_new_thread else existing_steps,
             )
-        else:
-            offset = len(existing_steps)
-            renumbered = [
-                {"step": offset + i + 1, "text": s["text"]}
-                for i, s in enumerate(new_steps)
-            ]
-            all_steps = existing_steps + renumbered
-            conn.execute(
-                text(
-                    'UPDATE "AGENT_THREAD" '
-                    "SET updatetool = :updatetool, steps = CAST(:steps AS jsonb) "
-                    "WHERE id = :id AND user_id = :user_id"
-                ),
-                {
-                    "id": thread_id,
-                    "user_id": user_id,
-                    "updatetool": update_tool,
-                    "steps": json.dumps(all_steps),
-                },
-            )
+            new_steps = metadata.get("new_steps", [])
+            update_tool = metadata.get("updateTool", "")
 
-        # Store the user message
-        conn.execute(
-            text(
-                'INSERT INTO "MESSAGE" (id, thread_id, message, role) '
-                "VALUES (:id, :thread_id, CAST(:message AS jsonb), 'user')"
-            ),
-            {
-                "id": str(uuid.uuid4()),
-                "thread_id": thread_id,
-                "message": json.dumps({"content": prompt}),
-            },
-        )
+            with engine.connect() as conn:
+                if is_new_thread:
+                    title = metadata.get("title", "")
+                    watch_tool = metadata.get("watcheTool", "")
+                    conn.execute(
+                        text(
+                            'INSERT INTO "AGENT_THREAD" (id, user_id, title, watchetool, updatetool, steps) '
+                            "VALUES (:id, :user_id, :title, :watchetool, :updatetool, CAST(:steps AS jsonb))"
+                        ),
+                        {
+                            "id": thread_id,
+                            "user_id": user_id,
+                            "title": title,
+                            "watchetool": watch_tool,
+                            "updatetool": update_tool,
+                            "steps": json.dumps(new_steps),
+                        },
+                    )
+                else:
+                    offset = len(existing_steps)
+                    renumbered = [
+                        {"step": offset + i + 1, "text": s["text"]}
+                        for i, s in enumerate(new_steps)
+                    ]
+                    all_steps_merged = existing_steps + renumbered
+                    conn.execute(
+                        text(
+                            'UPDATE "AGENT_THREAD" '
+                            "SET updatetool = :updatetool, steps = CAST(:steps AS jsonb) "
+                            "WHERE id = :id AND user_id = :user_id"
+                        ),
+                        {
+                            "id": thread_id,
+                            "user_id": user_id,
+                            "updatetool": update_tool,
+                            "steps": json.dumps(all_steps_merged),
+                        },
+                    )
 
-        # Store the assistant response
-        conn.execute(
-            text(
-                'INSERT INTO "MESSAGE" (id, thread_id, message, role) '
-                "VALUES (:id, :thread_id, CAST(:message AS jsonb), 'assistant')"
-            ),
-            {
-                "id": str(uuid.uuid4()),
-                "thread_id": thread_id,
-                "message": json.dumps({"content": agent_content}),
-            },
-        )
+                conn.execute(
+                    text(
+                        'INSERT INTO "MESSAGE" (id, thread_id, message, role) '
+                        "VALUES (:id, :thread_id, CAST(:message AS jsonb), 'user')"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "thread_id": thread_id,
+                        "message": json.dumps({"content": prompt}),
+                    },
+                )
+                conn.execute(
+                    text(
+                        'INSERT INTO "MESSAGE" (id, thread_id, message, role) '
+                        "VALUES (:id, :thread_id, CAST(:message AS jsonb), 'assistant')"
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "thread_id": thread_id,
+                        "message": json.dumps({"content": full_content}),
+                    },
+                )
+                conn.commit()
 
-        conn.commit()
+        await asyncio.to_thread(_save)
+        yield f"data: {json.dumps({'done': True, 'thread_id': thread_id})}\n\n"
 
-    return JSONResponse(
-        status_code=200,
-        content={
-            "message": "Agent created" if is_new_thread else "Agent updated",
-            "thread_id": thread_id,
-            "response": {
-                "content": agent_content,
-            },
-        },
-    )
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 
@@ -857,3 +889,35 @@ async def get_agent(thread_id: str, req: Request):
             ],
         },
     )
+
+
+@app.get("/user")
+async def get_user(req: Request):
+    user_id = req.state.user_id
+    with engine.connect() as conn:
+        result = conn.execute(
+            text('SELECT * FROM "USER" WHERE id = :id'),
+            {"id": user_id},
+        )
+        user = result.fetchone()
+    return JSONResponse(
+        status_code=200,
+        content={
+            "id": user.id,
+            "email": user.email,
+            "username": user.username,
+            "google_access_token": user.google_access_token,
+            "google_refresh_token": user.google_refresh_token,
+        },
+    )
+
+@app.get("/logout")
+async def logout(req: Request):
+    req.state.user_id = None
+    response=JSONResponse(
+        status_code=200,
+        content={"message": "Logged out"},
+    )
+    response.set_cookie(value="", **COOKIE_SETTINGS),
+    return response
+

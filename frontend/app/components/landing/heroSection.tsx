@@ -15,9 +15,8 @@ export default function HeroSection() {
 
       <div className="relative z-10 flex flex-col items-center justify-center h-full text-white gap-6 px-4 pt-16">
         <div className="flex items-center gap-2 border border-white/30 bg-white/10 backdrop-blur-sm rounded-full px-5 py-2 text-sm text-white/90 shadow-lg">
-          <span>Built by engineers from</span>
-          <span>and backed by</span>
-          <span className="font-bold text-orange-400 text-base">Y</span>
+          <span>Built by engineer from the internet </span>
+          <img src="/nobelium.png" alt="Nobelium" className="w-7 h-7  " />
         </div>
 
         <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-center leading-tight tracking-tight font-serif">

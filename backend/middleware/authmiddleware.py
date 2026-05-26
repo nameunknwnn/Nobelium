@@ -13,7 +13,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
         # Skip authentication for public routes
-        public_routes = ["/signup", "/signin", "/google/oauth", "/google/oauth/callback", "/docs", "/openapi.json","/me"]
+        public_routes = ["/signup", "/signin", "/google/oauth", "/google/oauth/callback", "/docs", "/openapi.json","/me","/send-email"]
         if request.url.path in public_routes:
             return await call_next(request)
         

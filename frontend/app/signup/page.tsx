@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function SignUp() {
   const [firstName, setFirstName] = useState("");
@@ -12,6 +12,22 @@ export default function SignUp() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/me`, {
+        credentials: "include",
+      });
+      if (res.status == 200) {
+        router.push("/user");
+        return;
+      }
+      setLoading(false);
+    };
+    checkAuth();
+  }, []);
+  
 
   const handleSubmit = async () => {
     setError("");

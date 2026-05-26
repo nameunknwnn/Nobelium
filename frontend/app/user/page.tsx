@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, use } from "react";
 
 interface Agent {
   id: string;
@@ -50,6 +50,26 @@ export default function UserDashboard() {
       }
     } catch {}
   };
+  
+  useEffect(() => {
+    const checkgoogle = async () => {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/user`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.google_access_token) {
+          setGoogleConnected(true);
+        }
+        else {
+          setGoogleConnected(false);
+        }
+      }
+    }
+    checkgoogle();
+  }, []);
+
+
 
   const handleSend = async () => {
     if (!prompt.trim() || sending) return;
@@ -61,12 +81,45 @@ export default function UserDashboard() {
         credentials: "include",
         body: JSON.stringify({ prompt }),
       });
-      const data = await res.json();
-      if (data.thread_id) {
-        router.push(`/user/${data.thread_id}`);
+
+      if (!res.ok || !res.body) throw new Error("Stream failed");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          for (const line of part.split("\n")) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.done && data.thread_id) {
+                router.push(`/user/${data.thread_id}`);
+                return;
+              }
+            } catch {}
+          }
+        }
       }
     } catch {
       setSending(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/logout`, {
+      credentials: "include",
+    });
+    if (res.ok) {
+      router.push("/");
     }
   };
 
@@ -97,11 +150,12 @@ export default function UserDashboard() {
     <div className="min-h-screen bg-[#0e0e10] text-white flex flex-col">
       {/* Top bar */}
       <header className="flex items-center justify-between px-6 py-4 border-b border-white/5">
-        <div className="flex items-center gap-2">
-          <span className="w-6 h-6 rounded-md bg-white/15 border border-white/20" />
+        <button className="flex items-center gap-2" onClick={() => router.push("/")}>
+          <img src="/nobelium.png" alt="Nobelium" className="w-8 h-8  " />
           <span className="font-semibold tracking-tight text-white">Nobelium</span>
-        </div>
-        <button
+        </button>
+        {googleConnected ? <button onClick={handleLogout}>loged out</button>
+          :<button
           onClick={() => (window.location.href = `${process.env.NEXT_PUBLIC_BACKEND_URL}/google/oauth`)}
           className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-white/80 hover:text-white"
         >
@@ -112,9 +166,9 @@ export default function UserDashboard() {
             <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
           </svg>
           Connect Google
-        </button>
-      </header>
-
+        </button>}
+       
+       </header>
       {/* Main content */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 pb-16">
         <div className="w-full max-w-2xl flex flex-col items-center gap-8">
