@@ -147,9 +147,9 @@ export default function UserDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0e0e10] text-white flex flex-col">
+    <div className="min-h-screen bg-[#0e0e10] text-white flex flex-col overflow-y-auto">
       {/* Top bar */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0">
         <button className="flex items-center gap-2" onClick={() => router.push("/")}>
           <img src="/nobelium.png" alt="Nobelium" className="w-8 h-8  " />
           <span className="font-semibold tracking-tight text-white">Nobelium</span>
@@ -181,7 +181,7 @@ export default function UserDashboard() {
         )}
       </header>
       {/* Main content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-4 pb-16">
+      <main className="flex flex-col items-center justify-center px-4 py-16 shrink-0">
         <div className="w-full max-w-2xl flex flex-col items-center gap-8">
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-semibold tracking-tight">What would you like to automate?</h1>
@@ -233,7 +233,7 @@ export default function UserDashboard() {
 
       {/* Previous automations */}
       {agents.length > 0 && (
-        <section className="px-6 pb-10 max-w-5xl mx-auto w-full">
+        <section className="px-6 pb-10 max-w-5xl mx-auto w-full shrink-0">
           <h2 className="text-xs font-semibold text-white/30 uppercase tracking-widest mb-4">Previous automations</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {agents.map((agent) => (
