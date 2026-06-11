@@ -18,8 +18,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from deepagents import create_deep_agent
+from tavily import TavilyClient
 from middleware.authmiddleware import AuthMiddleware
 import resend
+from urllib.parse import urlencode
 
 os.environ["OPENROUTER_API_KEY"] = settings.OPENROUTER_API_KEY
 resend.api_key = settings.RESEND_API_KEY
@@ -147,19 +149,28 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
+GOOGLE_OAUTH_SCOPES = " ".join([
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/spreadsheets",
+])
+
+
 @app.get("/google/oauth")
 async def google_oauth():
     params = {
         "client_id": settings.CLIENT_ID,
         "redirect_uri": settings.REDIRECT_URI,
         "response_type": "code",
-        "scope": "openid email profile https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar",
+        "scope": GOOGLE_OAUTH_SCOPES,
         "access_type": "offline",
         "prompt": "consent",
     }
-    query = "&".join(f"{k}={v}" for k, v in params.items())
-    print(f"={GOOGLE_AUTH_URL}?{query}")
-    return RedirectResponse(url=f"{GOOGLE_AUTH_URL}?{query}")
+    url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    return RedirectResponse(url=url)
 
 @app.get("/google/oauth/callback")
 async def google_oauth_callback(code: str):
@@ -555,6 +566,54 @@ def create_google_meet(summary: str, start_time: str, end_time: str, description
     })
 
 
+def create_google_sheet(title: str, headers_row: str, rows: str, access_token: str) -> str:
+    """Create a new Google Sheet and populate it with tabular data. Authentication is already configured.
+    title: the name of the new spreadsheet (e.g. 'Sales Report Q2').
+    headers_row: comma-separated column headers (e.g. 'Name,Email,Score,Date').
+    rows: each row on its own line, columns separated by commas. Example with 2 rows:
+      'Alice,alice@mail.com,95,2025-06-01
+      Bob,bob@mail.com,87,2025-06-02'
+    Returns a JSON string with the spreadsheet URL on success. Just call this tool directly with the data."""
+    try:
+        header_cells = [h.strip() for h in headers_row.split(",")]
+        values = [header_cells]
+        for line in rows.strip().splitlines():
+            values.append([c.strip() for c in line.split(",")])
+    except Exception as e:
+        return json.dumps({"error": f"Failed to parse data: {str(e)}"})
+
+    auth_headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+    create_resp = httpx.post(
+        "https://sheets.googleapis.com/v4/spreadsheets",
+        headers=auth_headers,
+        json={"properties": {"title": title}},
+    )
+    if create_resp.status_code not in (200, 201):
+        return json.dumps({"error": f"Failed to create sheet: {create_resp.text}"})
+
+    sheet_data = create_resp.json()
+    spreadsheet_id = sheet_data.get("spreadsheetId")
+    spreadsheet_url = sheet_data.get("spreadsheetUrl")
+
+    if values:
+        update_resp = httpx.put(
+            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/A1",
+            headers=auth_headers,
+            params={"valueInputOption": "USER_ENTERED"},
+            json={"values": values},
+        )
+        if update_resp.status_code not in (200, 201):
+            return json.dumps({"error": f"Sheet created but failed to add data: {update_resp.text}", "spreadsheetUrl": spreadsheet_url})
+
+    return json.dumps({
+        "success": True,
+        "spreadsheetId": spreadsheet_id,
+        "spreadsheetUrl": spreadsheet_url,
+        "message": "Google Sheet created successfully.",
+    })
+
+
 def extract_text(agent_result):
     messages = agent_result.get("messages", [])
     if not messages:
@@ -584,6 +643,8 @@ TOOL_DISPLAY_NAMES = {
     "search_calendar_events": "Google Calendar",
     "create_calendar_event": "Google Calendar",
     "create_google_meet": "Meet",
+    "web_search": "Web Search",
+    "create_google_sheet": "Google Sheets",
 }
 
 
@@ -658,6 +719,34 @@ Rules:
     return json.loads(raw)
 
 
+
+def web_search(query: str, num_results: int = 5) -> str:
+    """Search the internet for real-time information on any topic.
+    query: the search query describing what to look up (e.g. 'latest AI news', 'Python FastAPI tutorial').
+    num_results: maximum number of results to return (default 5, max 10).
+    Returns a JSON string with a list of search results including title, url, and content snippet."""
+    try:
+        client = TavilyClient(settings.TAVILY_API_KEY)
+        response = client.search(
+            query=query,
+            include_answer="advanced",
+            search_depth="advanced",
+            max_results=min(num_results, 10),
+        )
+        results = []
+        for r in response.get("results", []):
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "content": r.get("content", ""),
+                "score": r.get("score", 0),
+            })
+        return json.dumps({"results": results, "query": query})
+    except Exception as e:
+        return json.dumps({"error": f"Web search failed: {str(e)}"})
+
+
+
 @app.post("/agent")
 async def task_suggestion_agent(data: SuggestAgent, req: Request):
     prompt = data.prompt
@@ -709,27 +798,49 @@ async def task_suggestion_agent(data: SuggestAgent, req: Request):
     def _create_google_meet(summary: str, start_time: str, end_time: str, description: str, attendees: str) -> str:
         return create_google_meet(summary=summary, start_time=start_time, end_time=end_time, description=description, attendees=attendees, access_token=access_token)
 
+    def _create_google_sheet(title: str, headers_row: str, rows: str) -> str:
+        return create_google_sheet(title=title, headers_row=headers_row, rows=rows, access_token=access_token)
+
+    def _web_search(query: str, num_results: int = 5) -> str:
+        return web_search(query=query, num_results=num_results)
+
+    def _strip_auth_lines(doc: str | None) -> str:
+        if not doc:
+            return ""
+        skip_terms = ["access_token", "access token", "oauth"]
+        return "\n".join(
+            line for line in doc.splitlines()
+            if not any(term in line.lower() for term in skip_terms)
+        ).strip()
+
     _search_emails.__name__ = "search_emails"
-    _search_emails.__doc__ = search_emails.__doc__
+    _search_emails.__doc__ = _strip_auth_lines(search_emails.__doc__)
     _send_email.__name__ = "send_email"
-    _send_email.__doc__ = send_email.__doc__
+    _send_email.__doc__ = _strip_auth_lines(send_email.__doc__)
     _reply_to_email.__name__ = "reply_to_email"
-    _reply_to_email.__doc__ = reply_to_email.__doc__
+    _reply_to_email.__doc__ = _strip_auth_lines(reply_to_email.__doc__)
     _search_calendar_events.__name__ = "search_calendar_events"
-    _search_calendar_events.__doc__ = search_calendar_events.__doc__
+    _search_calendar_events.__doc__ = _strip_auth_lines(search_calendar_events.__doc__)
     _create_calendar_event.__name__ = "create_calendar_event"
-    _create_calendar_event.__doc__ = create_calendar_event.__doc__
+    _create_calendar_event.__doc__ = _strip_auth_lines(create_calendar_event.__doc__)
     _create_google_meet.__name__ = "create_google_meet"
-    _create_google_meet.__doc__ = create_google_meet.__doc__
+    _create_google_meet.__doc__ = _strip_auth_lines(create_google_meet.__doc__)
+    _create_google_sheet.__name__ = "create_google_sheet"
+    _create_google_sheet.__doc__ = _strip_auth_lines(create_google_sheet.__doc__)
+    _web_search.__name__ = "web_search"
+    _web_search.__doc__ = web_search.__doc__
 
     agent = create_deep_agent(
         model="openrouter:openai/gpt-oss-120b:free",
-        tools=[_search_emails, _send_email, _reply_to_email, _search_calendar_events, _create_calendar_event, _create_google_meet],
+        tools=[_search_emails, _send_email, _reply_to_email, _search_calendar_events, _create_calendar_event, _create_google_meet, _create_google_sheet, _web_search],
         system_prompt=(
-            "You are a productivity assistant with access to Gmail, Google Calendar, and Google Meet. "
-            "Use the available tools to help the user manage their emails, calendar events, and meetings. "
+            "You are a productivity assistant with access to Gmail, Google Calendar, Google Meet, Google Sheets, and Web Search. "
+            "All authentication and permissions are already configured — never ask the user for tokens, credentials, or permissions. "
+            "Just call the tools directly whenever the user asks you to do something. "
             "You can search emails, send new emails, reply to existing ones, search calendar events, "
-            "create calendar events, and create Google Meet meetings. "
+            "create calendar events, create Google Meet meetings, create Google Sheets with data, and search the internet for real-time information. "
+            "When the user asks to put data into a spreadsheet, use the create_google_sheet tool immediately with the data. "
+            "When the user asks a question that requires up-to-date information from the internet, use the web_search tool. "
             "Always choose the right tool based on what the user is asking."
         ),
     )
