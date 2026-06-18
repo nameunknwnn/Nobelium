@@ -310,7 +310,7 @@ def get_me(request: Request):
 def search_emails(query: str, access_token: str) -> str:
     """Search the Gmail inbox using a search query and return matching emails.
     Returns a JSON string with a list of emails including id, subject, sender, snippet, and date.
-
+    Use standard Gmail search syntax for the query (e.g. 'from:boss@company.com', 'subject:invoice', 'is:unread').
     access_token is the user's Google OAuth access token."""
     headers = {"Authorization": f"Bearer {access_token}"}
 
